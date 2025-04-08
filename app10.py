@@ -584,7 +584,7 @@ if app_mode == "Model Selection":
                     problem_type = st.selectbox("Select Problem Type", 
                                               ["time-series", "regression", "classification"])
         except Exception as e:
-            st.error(f"Groq validation error: {str(e)}")
+            st.error(f"Validation error: {str(e)}")
         
         st.success(f"Identified Problem Type: {problem_type.upper()}")
 
@@ -598,8 +598,7 @@ if app_mode == "Model Selection":
                 if col != target_var:
                     df[f'{col}_rolling_mean'] = df[col].rolling(window=window_size).mean()
                     df[f'{col}_rolling_std'] = df[col].rolling(window=window_size).std()
-            
-            # Holiday features using LLM
+
             client = initialize_groq_client()
             prompt = f"""Generate Python code to add holiday flags for {date_columns[0]} 
                        using country code from data: {df[date_columns[0]].head(3)}"""
