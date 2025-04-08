@@ -681,18 +681,26 @@ if app_mode == "Model Selection":
                 # LLM Analysis with Clean Insights
                 client = initialize_groq_client()
                 if client:
-                    analysis_prompt = f"""Directly provide these insights for {target_var} forecast:
-                    1. Trend Summary (20 words)
-                    2. Key Fluctuation Points
-                    3. Top 3 Business Recommendations
-                    4. Critical Risk Factors
+                    analysis_prompt = f"""Provide insights for {target_var} forecast in this exact format:
                     
+                    - **Trend Summary**: [Concise trend description with numbers]
+                    - **Key Fluctuation Points**:  
+                    - [Point 1]  
+                    - [Point 2]
+                    - **Top 3 Business Recommendations**:  
+                    1. [Recommendation 1]  
+                    2. [Recommendation 2]  
+                    3. [Recommendation 3]
+                    - **Critical Risk Factors**:  
+                    - [Risk 1]  
+                    - [Risk 2]
+
                     Data:
-                    - Peak: {round(predictions.max(), 2)}
-                    - Low: {round(predictions.min(), 2)}
-                    - Trend Direction: {'▲ Up' if predictions[-1] > predictions[0] else '▼ Down'}
+                    - Peak value: {round(predictions.max(), 2)}
+                    - Low value: {round(predictions.min(), 2)}
+                    - Average fluctuation: {round(np.mean(np.diff(predictions.flatten())) ,2)}
                     
-                    Format: Pure text with bullet points, no markdown, no explanations.
+                    Use markdown formatting with bold headers and proper bullet points.
                     
                     """
                     
