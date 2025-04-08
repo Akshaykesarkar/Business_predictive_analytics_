@@ -26,9 +26,7 @@ from sklearn.preprocessing import MinMaxScaler
 from sklearn.svm import SVC
 from sklearn.naive_bayes import GaussianNB
 from sklearn.neighbors import KNeighborsClassifier
-from sklearn.preprocessing import PolynomialFeatures, OneHotEncoder, StandardScaler
-from sklearn.pipeline import Pipeline
-from sklearn.linear_model import LinearRegression
+from sklearn.linear_model import LogisticRegression, LinearRegression
 from sklearn.metrics import accuracy_score, confusion_matrix, classification_report
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
@@ -544,130 +542,217 @@ if app_mode == "EDA":
                 
                 
 if app_mode == "Model Selection":
-    st.header("🧠 Hybrid Model Selection (Polynomial Regression & Classification)")
+    st.header("🧠 Context-Aware Model Selection (Hybrid Intelligence)")
 
     if 'df' in st.session_state and st.session_state.df is not None:
         df = st.session_state.df
         
-        # Problem Identification
-        st.subheader("🔍 Problem Type Detection")
+        # Automated Problem Categorization
+        st.subheader("🔍 Problem Identification")
+        
+        # Rule-based problem detection
+        date_columns = [col for col in df.columns 
+                       if re.search(r'date|time|year|month|day', col, re.I)]
         target_var = st.selectbox("Select Target Variable", df.columns)
         
-        # Heuristic rules
+        # Heuristic rules from research paper
         problem_type = "classification"
-        if pd.api.types.is_numeric_dtype(df[target_var]):
-            problem_type = st.selectbox("Confirm Problem Type",
-                                      ["regression", "classification"])
+        if len(date_columns) > 0:
+            problem_type = "time-series"
+        elif pd.api.types.is_numeric_dtype(df[target_var]):
+            problem_type = "regression" if df[target_var].nunique() > 10 else "classification"
         
-        # Groq validation
-        try:
-            client = initialize_groq_client()
-            if client:
-                prompt = f"""Given dataset with features: {df.columns.tolist()}
-                          and target '{target_var}', should this be treated as
-                          regression or classification? Answer only one word."""
-                
-                llm_check = client.chat.completions.create(
-                    model="deepseek-r1-distill-llama-70b",
-                    messages=[{"role": "user", "content": prompt}],
-                    temperature=0.3,
-                    max_tokens=10
-                ).choices[0].message.content.lower()
-                
-                if llm_check in ["regression", "classification"]:
-                    problem_type = llm_check
-        except Exception as e:
-            st.error(f"Validation error: {str(e)}")
+        # LLM-assisted validation
+        client = initialize_groq_client()
+        llm_check = client.chat.completions.create(
+            model="deepseek-r1-distill-llama-70b",
+            messages=[{"role": "user", "content": f"""Confirm problem type {problem_type} 
+                      for target '{target_var}' with features {df.columns}. Answer yes/no"""}],
+            temperature=0.3,
+            max_tokens=10
+        ).choices[0].message.content
+        
+        if "no" in llm_check.lower():
+            problem_type = st.selectbox("Select Problem Type", 
+                                      ["time-series", "regression", "classification"])
         
         st.success(f"Identified Problem Type: {problem_type.upper()}")
 
-        # Feature Engineering
-        if problem_type == "regression":
-            st.subheader("🎛 Polynomial Features Configuration")
-            degree = st.slider("Select Polynomial Degree", 1, 5, 2)
-            numeric_features = df.select_dtypes(include=np.number).columns.tolist()
-            features = [f for f in numeric_features if f != target_var]
+        # Temporal Feature Engineering (Fixed Version)
+        if problem_type == "time-series" and date_columns:
+            date_col = date_columns[0]
             
-            # Generate polynomial features
-            poly = PolynomialFeatures(degree=degree, include_bias=False)
-            X_poly = poly.fit_transform(df[features])
-            poly_features = poly.get_feature_names_out(features)
-            X = pd.DataFrame(X_poly, columns=poly_features)
-            y = df[target_var]
+            # Convert to datetime with error handling
+            df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
             
-        else:  # Classification
-            X = df.drop(columns=[target_var])
-            y = df[target_var]
+            # Drop invalid dates
+            df = df.dropna(subset=[date_col])
             
-            # Encode categorical features
-            cat_cols = X.select_dtypes(include=['object']).columns
-            if len(cat_cols) > 0:
-                encoder = OneHotEncoder(handle_unknown='ignore')
-                X_encoded = encoder.fit_transform(X[cat_cols])
-                X = pd.concat([
-                    X.drop(columns=cat_cols),
-                    pd.DataFrame(X_encoded.toarray(), 
-                               columns=encoder.get_feature_names_out(cat_cols))
-                ], axis=1)
+            # Set and sort datetime index
+            df = df.set_index(date_col).sort_index()
+            
+            # Resample with forward filling
+            window_size = st.slider("Historical Window Size (days)", 7, 60, 30)
+            
+            # Modified resampling with proper column handling
+            df = (df.resample('D')
+                  .mean(numeric_only=True)
+                  .ffill()
+                  .reset_index()
+                  .rename(columns={'index': date_col})  # Ensure consistent column naming
+                  .set_index(date_col)
+                  .sort_index())
+            
+            # Create rolling features
+            df['rolling_mean'] = df[target_var].rolling(window=window_size, min_periods=1).mean()
 
-        # Model Selection
-        st.subheader("⚙️ Model Configuration")
-        if problem_type == "regression":
-            model = Pipeline([
-                ('scaler', StandardScaler()),
-                ('regressor', LinearRegression())
-            ])
-            params = {
-                'degree': degree
-            }
+        # Rest of the model selection code remains the same...
+            df = df.dropna()
+
+        # Automated Model Selection
+        model = None
+        if problem_type == "time-series":
+            model = "LSTM"
+            params = {'units': 50, 'window': 30, 'epochs': 100}
+        elif problem_type == "regression":
+            model = "XGBoost"
+            params = {'n_estimators': 100, 'max_depth': 3}
         else:
-            model = RandomForestClassifier(
-                n_estimators=100,
-                class_weight='balanced',
-                max_depth=None
-            )
-            params = {
-                'n_estimators': 100,
-                'max_depth': None
-            }
+            model = "Random Forest"
+            params = {'n_estimators': 100, 'max_depth': 5}
         
-        # Model Training
-        if st.button("Train Model"):
-            X_train, X_test, y_train, y_test = train_test_split(
-                X, y, test_size=0.2, random_state=42
-            )
-            
-            model.fit(X_train, y_train)
-            predictions = model.predict(X_test)
-            
-            # Model Evaluation
-            st.subheader("📈 Performance Metrics")
-            if problem_type == "regression":
-                st.write(f"**Polynomial Degree:** {degree}")
-                st.write(f"R² Score: {r2_score(y_test, predictions):.2f}")
-                st.write(f"MAE: {mean_absolute_error(y_test, predictions):.2f}")
+        st.subheader(f"⚙️ Auto-Selected Model: {model}")
+        
+        if st.button("Train & Predict"):
+            if problem_type == "time-series":
+                # LSTM with Daily Averages
+                scaler = MinMaxScaler()
+                scaled_data = scaler.fit_transform(df[[target_var]])
                 
-                # Coefficients plot
-                if isinstance(model.named_steps['regressor'], LinearRegression):
-                    coefs = pd.DataFrame({
-                        'feature': X.columns,
-                        'coefficient': model.named_steps['regressor'].coef_
-                    })
-                    fig = px.bar(coefs, x='feature', y='coefficient', 
-                               title="Polynomial Regression Coefficients")
-                    st.plotly_chart(fig)
-            else:
-                st.write(f"Accuracy: {accuracy_score(y_test, predictions):.2f}")
-                st.write("Classification Report:")
-                st.write(classification_report(y_test, predictions))
+                # Create sequences
+                X, y = [], []
+                for i in range(params['window'], len(scaled_data)):
+                    X.append(scaled_data[i-params['window']:i])
+                    y.append(scaled_data[i])
+                X, y = np.array(X), np.array(y)
                 
-                # Feature Importance
-                fig = px.bar(
-                    x=X.columns,
-                    y=model.feature_importances_,
-                    labels={'x': 'Features', 'y': 'Importance'},
-                    title="Feature Importance"
+                # Build model
+                lstm_model = Sequential()
+                lstm_model.add(LSTM(params['units'], input_shape=(X.shape[1], 1)))
+                lstm_model.add(Dense(1))
+                lstm_model.compile(optimizer='adam', loss='mse')
+                lstm_model.fit(X, y, epochs=params['epochs'], verbose=0)
+                
+                # Generate 20-day forecast
+                last_seq = scaled_data[-params['window']:]
+                predictions = []
+                for _ in range(30):
+                    pred = lstm_model.predict(last_seq.reshape(1, params['window'], 1))
+                    predictions.append(pred[0,0])
+                    last_seq = np.append(last_seq[1:], pred)
+                
+                # Inverse transform
+                predictions = scaler.inverse_transform(np.array(predictions).reshape(-1,1))
+
+                # Create forecast dates
+                last_date = df.index[-1]
+                forecast_dates = pd.date_range(
+                    start=last_date + pd.Timedelta(days=1),  # Fixed datetime math
+                    periods=30
                 )
+
+                # Plot forecast-only graph
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(
+                    x=forecast_dates,
+                    y=predictions.flatten(),
+                    mode='lines+markers',
+                    name='30-Day Forecast',
+                    line=dict(color='#FF6B6B', width=3)
+                ))
+                fig.update_layout(
+                    title=f'30-Day {target_var} Forecast',
+                    xaxis_title='Date',
+                    yaxis_title=target_var,
+                    showlegend=True
+                )
+                st.plotly_chart(fig)
+
+                # LLM Analysis with Clean Insights
+                client = initialize_groq_client()
+                if client:
+                    analysis_prompt = f"""Analyze this forecast pattern and provide:
+                    1. Key trend observations (upward/downward/sideways)
+                    2. Notable fluctuations in next 30 days
+                    3. Business recommendations based on predictions
+                    4. Risk factors to monitor
+                    
+                    Data:
+                    - First 5 forecast values: {predictions.flatten()[:5].round(2).tolist()}
+                    - Last 5 forecast values: {predictions.flatten()[-5:].round(2).tolist()}
+                    - Maximum predicted value: {round(predictions.max(), 2)}
+                    - Minimum predicted value: {round(predictions.min(), 2)}
+                    
+                    Format: Clean bullet points without any XML tags."""
+                    
+                    try:
+                        raw_analysis = client.chat.completions.create(
+                            model="deepseek-r1-distill-llama-70b",
+                            messages=[{"role": "user", "content": analysis_prompt}],
+                            temperature=0.4,
+                            max_tokens=512
+                        ).choices[0].message.content
+
+                        # Clean output
+                        clean_analysis = re.sub(r'<[^>]+>', '', raw_analysis)
+                        
+                        st.subheader("🔍 Forecast Insights")
+                        st.markdown(f"```\n{clean_analysis}\n```")
+
+                    except Exception as e:
+                        st.error(f"Analysis failed: {str(e)}")
+
+                
+            else:
+                # Feature Analysis
+                selected_feature = st.selectbox("Analyze Feature Impact", 
+                                               df.drop(columns=[target_var]).columns)
+                feature_range = st.slider(f"{selected_feature} Range",
+                                         float(df[selected_feature].min()),
+                                         float(df[selected_feature].max()),
+                                         (float(df[selected_feature].quantile(0.25)),
+                                         float(df[selected_feature].quantile(0.75))))
+                
+                # Regression/Classification Model
+                X = df.drop(columns=[target_var])
+                y = df[target_var]
+                X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2)
+                
+                if problem_type == "regression":
+                    model = XGBRegressor(**params)
+                    model.fit(X_train, y_train)
+                    test_values = np.linspace(feature_range[0], feature_range[1], 20)
+                    predictions = []
+                    for val in test_values:
+                        sample = X.mean().to_dict()
+                        sample[selected_feature] = val
+                        predictions.append(model.predict([list(sample.values())])[0])
+                else:
+                    model = RandomForestClassifier(**params)
+                    model.fit(X_train, y_train)
+                    test_values = np.linspace(feature_range[0], feature_range[1], 20)
+                    predictions = []
+                    for val in test_values:
+                        sample = X.mean().to_dict()
+                        sample[selected_feature] = val
+                        predictions.append(model.predict_proba([list(sample.values())])[0][1])
+                
+                # Plot feature impact
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(x=test_values, y=predictions))
+                fig.update_layout(title=f"{selected_feature} Impact on {target_var}",
+                                xaxis_title=selected_feature,
+                                yaxis_title="Prediction")
                 st.plotly_chart(fig)
     else:
         st.warning("Please upload dataset first")
