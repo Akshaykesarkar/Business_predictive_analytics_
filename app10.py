@@ -681,19 +681,18 @@ if app_mode == "Model Selection":
                 # LLM Analysis with Clean Insights
                 client = initialize_groq_client()
                 if client:
-                    analysis_prompt = f"""Analyze this forecast pattern and provide:
-                    1. Key trend observations (upward/downward/sideways)
-                    2. Notable fluctuations in next 30 days
-                    3. Business recommendations based on predictions
-                    4. Risk factors to monitor
+                    analysis_prompt = f"""Directly provide these insights for {target_var} forecast:
+                    1. Trend Summary (20 words)
+                    2. Key Fluctuation Points
+                    3. Top 3 Business Recommendations
+                    4. Critical Risk Factors
                     
                     Data:
-                    - First 5 forecast values: {predictions.flatten()[:5].round(2).tolist()}
-                    - Last 5 forecast values: {predictions.flatten()[-5:].round(2).tolist()}
-                    - Maximum predicted value: {round(predictions.max(), 2)}
-                    - Minimum predicted value: {round(predictions.min(), 2)}
+                    - Peak: {round(predictions.max(), 2)}
+                    - Low: {round(predictions.min(), 2)}
+                    - Trend Direction: {'▲ Up' if predictions[-1] > predictions[0] else '▼ Down'}
                     
-                    Format: Clean bullet points without any XML tags."""
+                    Format: Pure text with bullet points, no markdown, no explanations."""
                     
                     try:
                         raw_analysis = client.chat.completions.create(
@@ -703,10 +702,10 @@ if app_mode == "Model Selection":
                             max_tokens=512
                         ).choices[0].message.content
 
-                        # Clean output
+                        # Clean any residual XML tags
                         clean_analysis = re.sub(r'<[^>]+>', '', raw_analysis)
                         
-                        st.subheader("🔍 Forecast Insights")
+                        st.subheader("📈 Forecast Insights")
                         st.markdown(f"```\n{clean_analysis}\n```")
 
                     except Exception as e:
