@@ -785,8 +785,8 @@ if app_mode == "Chat Assistant":
     conversation = ConversationChain(memory=st.session_state.buffer_memory, llm=st.session_state.llm, verbose=True)
 
     # Load dataset into the agent if available
-    if df is not None:
-        pandas_agent = create_pandas_dataframe_agent(st.session_state.llm, df, verbose=True, allow_dangerous_code=True)
+    if uploaded_file is not None:
+        pandas_agent = create_pandas_dataframe_agent(st.session_state.llm, uploaded_file, verbose=True, allow_dangerous_code=True)
     else:
         pandas_agent = None
 
