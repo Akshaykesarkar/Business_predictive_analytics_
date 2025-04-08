@@ -709,7 +709,7 @@ if app_mode == "Model Selection":
                             model="deepseek-r1-distill-llama-70b",
                             messages=[{"role": "user", "content": analysis_prompt}],
                             temperature=0.4,
-                            max_tokens=512
+                            max_tokens=131072
                         ).choices[0].message.content
 
                         # Clean any residual XML tags
