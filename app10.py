@@ -565,15 +565,26 @@ if app_mode == "Model Selection":
             else:
                 problem_type = "classification"
         
-        # LLM-assisted validation
-        llm = OpenAI(temperature=0)
-        llm_check = llm(f"""Based on these features: {df.columns.tolist()} 
-                      and target '{target_var}', confirm if {problem_type} 
-                      is correct. Answer only yes/no.""")
-        
-        if "no" in llm_check.lower():
-            problem_type = st.selectbox("Select Problem Type", 
-                                      ["time-series", "regression", "classification"])
+        # Groq-assisted validation
+        try:
+            client = initialize_groq_client()
+            if client:
+                prompt = f"""Based on these features: {df.columns.tolist()} 
+                          and target '{target_var}', confirm if {problem_type} 
+                          is correct. Answer only yes/no."""
+                
+                llm_check = client.chat.completions.create(
+                    model="deepseek-r1-distill-llama-70b",
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.3,
+                    max_tokens=10
+                ).choices[0].message.content
+                
+                if "no" in llm_check.lower():
+                    problem_type = st.selectbox("Select Problem Type", 
+                                              ["time-series", "regression", "classification"])
+        except Exception as e:
+            st.error(f"Groq validation error: {str(e)}")
         
         st.success(f"Identified Problem Type: {problem_type.upper()}")
 
