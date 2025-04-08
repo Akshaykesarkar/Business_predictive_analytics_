@@ -607,11 +607,6 @@ if app_mode == "Model Selection":
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.3
             ).choices[0].message.content
-            
-            try:
-                exec(holiday_code, {'df': df, 'pd': pd})
-            except Exception as e:
-                st.error(f"Holiday feature error: {str(e)}")
 
         # Automated Model Selection (Research Paper Approach)
         if problem_type == "time-series":
