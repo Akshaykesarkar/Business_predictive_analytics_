@@ -692,7 +692,9 @@ if app_mode == "Model Selection":
                     - Low: {round(predictions.min(), 2)}
                     - Trend Direction: {'▲ Up' if predictions[-1] > predictions[0] else '▼ Down'}
                     
-                    Format: Pure text with bullet points, no markdown, no explanations."""
+                    Format: Pure text with bullet points, no markdown, no explanations.
+                    
+                    """
                     
                     try:
                         raw_analysis = client.chat.completions.create(
@@ -703,7 +705,7 @@ if app_mode == "Model Selection":
                         ).choices[0].message.content
 
                         # Clean any residual XML tags
-                        clean_analysis = re.sub(r'<[^>]+>', '', raw_analysis)
+                        clean_analysis = re.sub(r'<think>.*?</think>', '', raw_analysis, flags=re.DOTALL)
                         
                         st.subheader("📈 Forecast Insights")
                         st.markdown(f"```\n{clean_analysis}\n```")
