@@ -542,175 +542,131 @@ if app_mode == "EDA":
                 
                 
 if app_mode == "Model Selection":
-    st.header("🧠 Context-Aware Model Selection (Hybrid Intelligence)")
+    st.header("🧠 Hybrid Model Selection (Polynomial Regression & Classification)")
 
     if 'df' in st.session_state and st.session_state.df is not None:
         df = st.session_state.df
         
-        # Automated Problem Categorization
-        st.subheader("🔍 Problem Identification")
-        
-        # Rule-based problem detection
-        date_columns = [col for col in df.columns 
-                       if re.search(r'date|time|year|month|day', col, re.I)]
+        # Problem Identification
+        st.subheader("🔍 Problem Type Detection")
         target_var = st.selectbox("Select Target Variable", df.columns)
         
-        # Heuristic rules from research paper
+        # Heuristic rules
         problem_type = "classification"
-        if len(date_columns) > 0:
-            problem_type = "time-series"
-        elif pd.api.types.is_numeric_dtype(df[target_var]):
-            if df[target_var].nunique() > 10:
-                problem_type = "regression"
-            else:
-                problem_type = "classification"
+        if pd.api.types.is_numeric_dtype(df[target_var]):
+            problem_type = st.selectbox("Confirm Problem Type",
+                                      ["regression", "classification"])
         
-        # Groq-assisted validation
+        # Groq validation
         try:
             client = initialize_groq_client()
             if client:
-                prompt = f"""Based on these features: {df.columns.tolist()} 
-                          and target '{target_var}', confirm if {problem_type} 
-                          is correct. Answer only yes/no."""
+                prompt = f"""Given dataset with features: {df.columns.tolist()}
+                          and target '{target_var}', should this be treated as
+                          regression or classification? Answer only one word."""
                 
                 llm_check = client.chat.completions.create(
                     model="deepseek-r1-distill-llama-70b",
                     messages=[{"role": "user", "content": prompt}],
                     temperature=0.3,
                     max_tokens=10
-                ).choices[0].message.content
+                ).choices[0].message.content.lower()
                 
-                if "no" in llm_check.lower():
-                    problem_type = st.selectbox("Select Problem Type", 
-                                              ["time-series", "regression", "classification"])
+                if llm_check in ["regression", "classification"]:
+                    problem_type = llm_check
         except Exception as e:
             st.error(f"Validation error: {str(e)}")
         
         st.success(f"Identified Problem Type: {problem_type.upper()}")
 
-        # Temporal Feature Engineering (Rule-based)
-        if problem_type == "time-series" and date_columns:
-            df = df.sort_values(by=date_columns[0])
+        # Feature Engineering
+        if problem_type == "regression":
+            st.subheader("🎛 Polynomial Features Configuration")
+            degree = st.slider("Select Polynomial Degree", 1, 5, 2)
+            numeric_features = df.select_dtypes(include=np.number).columns.tolist()
+            features = [f for f in numeric_features if f != target_var]
             
-            # Create sliding window features
-            window_size = st.slider("Select Rolling Window Size", 7, 30, 14)
-            for col in df.select_dtypes(include=np.number).columns:
-                if col != target_var:
-                    df[f'{col}_rolling_mean'] = df[col].rolling(window=window_size).mean()
-                    df[f'{col}_rolling_std'] = df[col].rolling(window=window_size).std()
-
-            client = initialize_groq_client()
-            prompt = f"""Generate Python code to add holiday flags for {date_columns[0]} 
-                       using country code from data: {df[date_columns[0]].head(3)}"""
-            holiday_code = client.chat.completions.create(
-                model="deepseek-r1-distill-llama-70b",
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.3
-            ).choices[0].message.content
-
-        # Automated Model Selection (Research Paper Approach)
-        if problem_type == "time-series":
-            model = "LSTM"
-            params = {
-                'window_size': 30,
-                'epochs': 100,
-                'hidden_units': 50
-            }
-        elif problem_type == "regression":
-            model = "XGBoost"
-            params = {
-                'n_estimators': 100,
-                'max_depth': 6,
-                'learning_rate': 0.1
-            }
-        else:  # classification
-            model = "Random Forest"
-            params = {
-                'n_estimators': 100,
-                'max_depth': None,
-                'class_weight': 'balanced'
-            }
-        
-        st.subheader(f"⚙️ Auto-Selected Model: {model}")
-        
-        # Model Training with SHAP Integration
-        if st.button("Train Hybrid Model"):
+            # Generate polynomial features
+            poly = PolynomialFeatures(degree=degree, include_bias=False)
+            X_poly = poly.fit_transform(df[features])
+            poly_features = poly.get_feature_names_out(features)
+            X = pd.DataFrame(X_poly, columns=poly_features)
+            y = df[target_var]
+            
+        else:  # Classification
             X = df.drop(columns=[target_var])
             y = df[target_var]
             
-            # Rule-based feature selection
-            if problem_type == "time-series":
-                X = X.select_dtypes(include=np.number).fillna(method='ffill')
-                test_size = 0.2
-            else:
-                X_train, X_test, y_train, y_test = train_test_split(
-                    X, y, test_size=0.2, random_state=42)
-            
-            # Model-specific training
-            if model == "LSTM":
-                # Implement paper's LSTM approach
-                scaler = MinMaxScaler()
-                scaled_data = scaler.fit_transform(df[[target_var]])
-                
-                # Create sequences
-                def create_sequences(data, window_size):
-                    X, y = [], []
-                    for i in range(len(data)-window_size):
-                        X.append(data[i:i+window_size])
-                        y.append(data[i+window_size])
-                    return np.array(X), np.array(y)
-                
-                X_seq, y_seq = create_sequences(scaled_data, params['window_size'])
-                X_train, X_test = X_seq[:int(0.8*len(X_seq))], X_seq[int(0.8*len(X_seq)):]
-                y_train, y_test = y_seq[:int(0.8*len(y_seq))], y_seq[int(0.8*len(y_seq)):]
-                
-                # Build LSTM model
-                lstm_model = Sequential()
-                lstm_model.add(LSTM(params['hidden_units'], 
-                                  input_shape=(params['window_size'], 1)))
-                lstm_model.add(Dense(1))
-                lstm_model.compile(optimizer='adam', loss='mse')
-                
-                lstm_model.fit(X_train, y_train, 
-                              epochs=params['epochs'], 
-                              validation_split=0.1,
-                              verbose=1)
-                
-                # Forecasting
-                predictions = lstm_model.predict(X_test)
-                predictions = scaler.inverse_transform(predictions)
-                y_test_actual = scaler.inverse_transform(y_test.reshape(-1,1))
-                
-            else:
-                # Traditional model training
-                if model == "XGBoost":
-                    model = XGBRegressor(**params)
-                elif model == "Random Forest":
-                    model = RandomForestClassifier(**params)
-                
-                model.fit(X_train, y_train)
-                predictions = model.predict(X_test)
-            
-            # SHAP Explanations
-            st.subheader("📊 Model Explanation (SHAP Values)")
-            if model != "LSTM":
-                explainer = shap.Explainer(model)
-                shap_values = explainer(X_test)
-                fig, ax = plt.subplots()
-                shap.summary_plot(shap_values, X_test, plot_type="bar")
-                st.pyplot(fig)
-            else:
-                st.write("LSTM feature importance visualization not supported")
+            # Encode categorical features
+            cat_cols = X.select_dtypes(include=['object']).columns
+            if len(cat_cols) > 0:
+                encoder = OneHotEncoder(handle_unknown='ignore')
+                X_encoded = encoder.fit_transform(X[cat_cols])
+                X = pd.concat([
+                    X.drop(columns=cat_cols),
+                    pd.DataFrame(X_encoded.toarray(), 
+                               columns=encoder.get_feature_names_out(cat_cols))
+                ], axis=1)
 
-            # Performance Metrics
+        # Model Selection
+        st.subheader("⚙️ Model Configuration")
+        if problem_type == "regression":
+            model = Pipeline([
+                ('scaler', StandardScaler()),
+                ('regressor', LinearRegression())
+            ])
+            params = {
+                'degree': degree
+            }
+        else:
+            model = RandomForestClassifier(
+                n_estimators=100,
+                class_weight='balanced',
+                max_depth=None
+            )
+            params = {
+                'n_estimators': 100,
+                'max_depth': None
+            }
+        
+        # Model Training
+        if st.button("Train Model"):
+            X_train, X_test, y_train, y_test = train_test_split(
+                X, y, test_size=0.2, random_state=42
+            )
+            
+            model.fit(X_train, y_train)
+            predictions = model.predict(X_test)
+            
+            # Model Evaluation
             st.subheader("📈 Performance Metrics")
-            if problem_type in ["regression", "time-series"]:
-                st.write(f"MAE: {mean_absolute_error(y_test_actual, predictions):.2f}")
-                st.write(f"RMSE: {np.sqrt(mean_squared_error(y_test_actual, predictions)):.2f}")
+            if problem_type == "regression":
+                st.write(f"**Polynomial Degree:** {degree}")
+                st.write(f"R² Score: {r2_score(y_test, predictions):.2f}")
+                st.write(f"MAE: {mean_absolute_error(y_test, predictions):.2f}")
+                
+                # Coefficients plot
+                if isinstance(model.named_steps['regressor'], LinearRegression):
+                    coefs = pd.DataFrame({
+                        'feature': X.columns,
+                        'coefficient': model.named_steps['regressor'].coef_
+                    })
+                    fig = px.bar(coefs, x='feature', y='coefficient', 
+                               title="Polynomial Regression Coefficients")
+                    st.plotly_chart(fig)
             else:
                 st.write(f"Accuracy: {accuracy_score(y_test, predictions):.2f}")
                 st.write("Classification Report:")
                 st.write(classification_report(y_test, predictions))
+                
+                # Feature Importance
+                fig = px.bar(
+                    x=X.columns,
+                    y=model.feature_importances_,
+                    labels={'x': 'Features', 'y': 'Importance'},
+                    title="Feature Importance"
+                )
+                st.plotly_chart(fig)
     else:
         st.warning("Please upload dataset first")
 
