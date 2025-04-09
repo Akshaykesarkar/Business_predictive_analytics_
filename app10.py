@@ -725,7 +725,8 @@ if app_mode == "Model Selection":
                     ).choices[0].message.content
                     
                     st.subheader("📊 Business Insights")
-                    st.write(analysis)
+                    cleaned_output = re.sub(r'<think>.*?</think>', '', analysis, flags=re.DOTALL)
+                    st.write(cleaned_output.strip())
                 except Exception as e:
                     st.error(f"Analysis failed: {str(e)}")
 
