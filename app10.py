@@ -545,7 +545,7 @@ if app_mode == "Model Selection":
     st.header("🧠 Context-Aware Model Selection (Hybrid Intelligence)")
 
     if 'df' in st.session_state and st.session_state.df is not None:
-        df = st.session_state.df
+        df = st.session_state.df.copy()
         
         # Automated Problem Categorization
         st.subheader("🔍 Problem Identification")
@@ -593,27 +593,41 @@ if app_mode == "Model Selection":
             
             # Resample with forward filling
             window_size = st.slider("Historical Window Size (days)", 7, 60, 30)
+            numeric_df = df.select_dtypes(include='number')
+            df = numeric_df.resample('D').mean().ffill()
             
-            # Modified resampling with proper column handling
-            df = (df.resample('D')
-                  .mean(numeric_only=True)
-                  .ffill()
-                  .reset_index()
-                  .rename(columns={'index': date_col})  # Ensure consistent column naming
-                  .set_index(date_col)
-                  .sort_index())
-            
-            # Create rolling features
-            df['rolling_mean'] = df[target_var].rolling(window=window_size, min_periods=1).mean()
+            # Create sequences for LSTM
+            target_series = df[[target_var]].values
+            scaler = MinMaxScaler(feature_range=(0, 1))
+            scaled_data = scaler.fit_transform(target_series)
 
-        # Rest of the model selection code remains the same...
-            df = df.dropna()
+            # Prepare LSTM dataset
+            X, y = [], []
+            for i in range(window_size, len(scaled_data)):
+                X.append(scaled_data[i-window_size:i, 0])
+                y.append(scaled_data[i, 0])
+            X, y = np.array(X), np.array(y)
+            X = np.reshape(X, (X.shape[0], X.shape[1], 1))
+
+            # Store in session state
+            st.session_state.lstm_data = {
+                'X': X,
+                'y': y,
+                'scaler': scaler,
+                'window_size': window_size,
+                'scaled_data': scaled_data
+            }
 
         # Automated Model Selection
         model = None
         if problem_type == "time-series":
             model = "LSTM"
-            params = {'units': 50, 'window': 30, 'epochs': 100}
+            params = {
+                'units': 50,
+                'window': st.session_state.lstm_data['window_size'] if 'lstm_data' in st.session_state else 30,
+                'epochs': 100,
+                'batch_size': 32
+            }
         elif problem_type == "regression":
             model = "XGBoost"
             params = {'n_estimators': 100, 'max_depth': 3}
@@ -625,144 +639,125 @@ if app_mode == "Model Selection":
         
         if st.button("Train & Predict"):
             if problem_type == "time-series":
-                # LSTM with Daily Averages
-                scaler = MinMaxScaler()
-                scaled_data = scaler.fit_transform(df[[target_var]])
-                
-                # Create sequences
-                X, y = [], []
-                for i in range(params['window'], len(scaled_data)):
-                    X.append(scaled_data[i-params['window']:i])
-                    y.append(scaled_data[i])
-                X, y = np.array(X), np.array(y)
-                
-                # Build model
-                lstm_model = Sequential()
-                lstm_model.add(LSTM(params['units'], input_shape=(X.shape[1], 1)))
-                lstm_model.add(Dense(1))
-                lstm_model.compile(optimizer='adam', loss='mse')
-                lstm_model.fit(X, y, epochs=params['epochs'], verbose=0)
-                
-                # Generate 20-day forecast
-                last_seq = scaled_data[-params['window']:]
-                predictions = []
-                for _ in range(30):
-                    pred = lstm_model.predict(last_seq.reshape(1, params['window'], 1))
-                    predictions.append(pred[0,0])
-                    last_seq = np.append(last_seq[1:], pred)
-                
-                # Inverse transform
-                predictions = scaler.inverse_transform(np.array(predictions).reshape(-1,1))
+                if 'lstm_data' not in st.session_state:
+                    st.error("Please configure time-series parameters first")
+                    
 
-                # Create forecast dates
+                # Get prepared data
+                X = st.session_state.lstm_data['X']
+                y = st.session_state.lstm_data['y']
+                scaler = st.session_state.lstm_data['scaler']
+                scaled_data = st.session_state.lstm_data['scaled_data']
+                window_size = st.session_state.lstm_data['window_size']
+
+                # Build LSTM model
+                lstm_model = Sequential()
+                lstm_model.add(LSTM(
+                    units=params['units'],
+                    return_sequences=False,
+                    input_shape=(X.shape[1], 1)
+                ))
+                lstm_model.add(Dense(1))
+                lstm_model.compile(optimizer='adam', loss='mean_squared_error')
+
+                # Train model
+                history = lstm_model.fit(
+                    X, y,
+                    epochs=params['epochs'],
+                    batch_size=params['batch_size'],
+                    verbose=0
+                )
+
+                # Generate forecast
+                forecast_steps = 30
+                last_sequence = scaled_data[-window_size:]
+                predictions = []
+
+                for _ in range(forecast_steps):
+                    x_input = last_sequence.reshape((1, window_size, 1))
+                    pred = lstm_model.predict(x_input, verbose=0)[0][0]
+                    predictions.append(pred)
+                    last_sequence = np.append(last_sequence[1:], pred)
+
+                # Inverse transform predictions
+                predictions = scaler.inverse_transform(
+                    np.array(predictions).reshape(-1, 1))
+                
+                # Generate dates for forecast
                 last_date = df.index[-1]
                 forecast_dates = pd.date_range(
-                    start=last_date + pd.Timedelta(days=1),  # Fixed datetime math
-                    periods=30
+                    start=last_date + pd.Timedelta(days=1),
+                    periods=forecast_steps
                 )
 
-                # Plot forecast-only graph
-                fig = go.Figure()
-                fig.add_trace(go.Scatter(
-                    x=forecast_dates,
-                    y=predictions.flatten(),
-                    mode='lines+markers',
-                    name='30-Day Forecast',
-                    line=dict(color='#FF6B6B', width=3)
-                ))
-                fig.update_layout(
-                    title=f'30-Day {target_var} Forecast',
-                    xaxis_title='Date',
-                    yaxis_title=target_var,
-                    showlegend=True
+                # Create forecast DataFrame
+                forecast_df = pd.DataFrame({
+                    'Date': forecast_dates,
+                    'Prediction': predictions.flatten()
+                }).set_index('Date')
+
+                # Show predictions
+                st.subheader("📈 30-Day Forecast")
+                fig = px.line(
+                    forecast_df,
+                    x=forecast_df.index,
+                    y='Prediction',
+                    title='30-Day Forecast',
+                    labels={'Prediction': target_var, 'index': 'Date'},
+                    markers=True
                 )
-                st.plotly_chart(fig)
+                fig.update_layout(xaxis_title="Date", yaxis_title=target_var)
 
-                # LLM Analysis with Clean Insights
-                client = initialize_groq_client()
-                if client:
-                    analysis_prompt = f"""Provide insights for {target_var} forecast in this exact format:
-                    
-                    - **Trend Summary**: [Concise trend description with numbers]
-                    - **Key Fluctuation Points**:  
-                    - [Point 1]  
-                    - [Point 2]
-                    - **Top 3 Business Recommendations**:  
-                    1. [Recommendation 1]  
-                    2. [Recommendation 2]  
-                    3. [Recommendation 3]
-                    - **Critical Risk Factors**:  
-                    - [Risk 1]  
-                    - [Risk 2]
+                st.plotly_chart(fig, use_container_width=True)
 
-                    Data:
-                    - Peak value: {round(predictions.max(), 2)}
-                    - Low value: {round(predictions.min(), 2)}
-                    - Average fluctuation: {round(np.mean(np.diff(predictions.flatten())) ,2)}
-                    
-                    Use markdown formatting with bold headers and proper bullet points.
-                    
-                    """
-                    
-                    try:
-                        raw_analysis = client.chat.completions.create(
-                            model="deepseek-r1-distill-llama-70b",
-                            messages=[{"role": "user", "content": analysis_prompt}],
-                            temperature=0.4,
-                            max_tokens=131072
-                        ).choices[0].message.content
-
-                        # Clean any residual XML tags
-                        clean_analysis = re.sub(r'<think>.*?</think>', '', raw_analysis, flags=re.DOTALL)
-                        
-                        st.subheader("📈 Forecast Insights")
-                        st.markdown(f"```\n{clean_analysis}\n```")
-
-                    except Exception as e:
-                        st.error(f"Analysis failed: {str(e)}")
-
+                # LLM Analysis
+                analysis_prompt = f"""Analyze this time series forecast:
+                - Current trend: {df[target_var].iloc[-10:].mean():.2f} → {predictions.mean():.2f}
+                - Peak prediction: {predictions.max():.2f} on {forecast_dates[np.argmax(predictions)].strftime('%Y-%m-%d')}
+                - Minimum prediction: {predictions.min():.2f} on {forecast_dates[np.argmin(predictions)].strftime('%Y-%m-%d')}
+                Provide 3 business recommendations based on these predictions."""
                 
+                try:
+                    analysis = client.chat.completions.create(
+                        model="deepseek-r1-distill-llama-70b",
+                        messages=[{"role": "user", "content": analysis_prompt}],
+                        temperature=0.4
+                    ).choices[0].message.content
+                    
+                    st.subheader("📊 Business Insights")
+                    st.write(analysis)
+                except Exception as e:
+                    st.error(f"Analysis failed: {str(e)}")
+
             else:
-                # Feature Analysis
-                selected_feature = st.selectbox("Analyze Feature Impact", 
-                                               df.drop(columns=[target_var]).columns)
-                feature_range = st.slider(f"{selected_feature} Range",
-                                         float(df[selected_feature].min()),
-                                         float(df[selected_feature].max()),
-                                         (float(df[selected_feature].quantile(0.25)),
-                                         float(df[selected_feature].quantile(0.75))))
-                
-                # Regression/Classification Model
+                # Regression/Classification implementation
                 X = df.drop(columns=[target_var])
                 y = df[target_var]
                 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2)
                 
                 if problem_type == "regression":
                     model = XGBRegressor(**params)
-                    model.fit(X_train, y_train)
-                    test_values = np.linspace(feature_range[0], feature_range[1], 20)
-                    predictions = []
-                    for val in test_values:
-                        sample = X.mean().to_dict()
-                        sample[selected_feature] = val
-                        predictions.append(model.predict([list(sample.values())])[0])
                 else:
                     model = RandomForestClassifier(**params)
-                    model.fit(X_train, y_train)
-                    test_values = np.linspace(feature_range[0], feature_range[1], 20)
-                    predictions = []
-                    for val in test_values:
-                        sample = X.mean().to_dict()
-                        sample[selected_feature] = val
-                        predictions.append(model.predict_proba([list(sample.values())])[0][1])
                 
-                # Plot feature impact
-                fig = go.Figure()
-                fig.add_trace(go.Scatter(x=test_values, y=predictions))
-                fig.update_layout(title=f"{selected_feature} Impact on {target_var}",
-                                xaxis_title=selected_feature,
-                                yaxis_title="Prediction")
-                st.plotly_chart(fig)
+                model.fit(X_train, y_train)
+                
+                # Generate predictions for all features
+                input_data = {}
+                for feature in X.columns:
+                    input_data[feature] = [st.session_state.df[feature].median()]
+                
+                prediction = model.predict(pd.DataFrame([input_data]))[0]
+                
+                st.subheader("📊 Prediction Result")
+                if problem_type == "regression":
+                    st.metric("Predicted Value", f"{prediction:.2f}")
+                else:
+                    st.metric("Predicted Class", prediction)
+                    probabilities = model.predict_proba(pd.DataFrame([input_data]))[0]
+                    st.write("Class Probabilities:", 
+                           dict(zip(model.classes_, np.round(probabilities, 2))))
+
     else:
         st.warning("Please upload dataset first")
 
