@@ -726,7 +726,9 @@ if app_mode == "Model Selection":
                     
                     st.subheader("📊 Business Insights")
                     cleaned_output = re.sub(r'<think>.*?</think>', '', analysis, flags=re.DOTALL)
+            
                     st.write(cleaned_output.strip())
+                
                 except Exception as e:
                     st.error(f"Analysis failed: {str(e)}")
 
@@ -761,7 +763,7 @@ if app_mode == "Model Selection":
 
     else:
         st.warning("Please upload dataset first")
-
+        
 # ---- 3️⃣ AI Chat Assistant ---- #
 if app_mode == "Chat Assistant":
     st.header("💬 AI-Powered Chat Assistant")
